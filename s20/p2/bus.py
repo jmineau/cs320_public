@@ -125,6 +125,10 @@ class BusDay:
         rect_stop_list = []
         x1,x2 = xlim[0],xlim[1]
         y1,y2 = ylim[0],ylim[1]
+        if x1 > x2:
+            x1,x2 = x2,x1
+        if y1 > y2:
+            y1,y2 = y2,y1
         for stop in stop_list:
             if stop.location.x >= x1 and stop.location.x <= x2 and stop.location.y >= y1 and stop.location.y <= y2:
                 rect_stop_list.append(stop)
