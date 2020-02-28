@@ -62,7 +62,7 @@ class Location:
 
 class Node:
     def __init__(self, stops, i=1):
-        if i != 6:
+        if i != 7:
             if i % 2 != 0:
                 stops = sorted(stops, key = lambda s: s.location.x)
             else:
@@ -98,7 +98,7 @@ class Node:
     def search(self, xlim, ylim, i=1):
         x1,x2 = xlim
         y1,y2 = ylim
-        if i < 6:  
+        if i < 7:  
             if i % 2 != 0:
                 i += 1
                 results = []
@@ -129,18 +129,19 @@ class Node:
             return found_stops
         return results
     
-    def non_leafs(self, ax, xlim, ylim, i=5):
-        if i>0:
+    def non_leafs(self, ax, xlim, ylim, i=1):
+        lw = 5/i
+        if i < 7:
             if i % 2 != 0:
-                lw = i
-                i-=1
-                ax.plot((self.val.x,self.val.x), ylim, lw=lw, color='purple')               
+                i+=1
+                ax.plot((self.val.x, self.val.x), ylim, lw=lw, color='purple', zorder=-1)
+                self.left.non_leafs(ax, (xlim[0], self.val.x), ylim, i)
+                self.right.non_leafs(ax, (self.val.x, xlim[1]), ylim, i)
             else:
-                lw = i
-                i-=1
-                ax.plot(xlim, (self.val.y,self.val.y), lw=lw, color='purple')
-            self.left.non_leafs(ax,xlim,ylim,i)
-            self.right.non_leafs(ax,xlim,ylim,i)
+                i+=1
+                ax.plot(xlim, (self.val.y, self.val.y), lw=lw, color='purple', zorder=-1)
+                self.left.non_leafs(ax, xlim, (ylim[0], self.val.y), i)
+                self.right.non_leafs(ax, xlim, (self.val.y, ylim[1]), i)
 
 class BusDay:
     def __init__(self,time):        
@@ -228,8 +229,8 @@ class BusDay:
         df.set_index('stop_id', inplace = True)
         red = df[df['wheelchair_boarding']==1]
         grey = df[df['wheelchair_boarding']==0]
-        red.plot.scatter(x='x', y='y', ax=ax, s=0.5, color='red', marker = 'o')
-        grey.plot.scatter(x='x', y='y', ax=ax, s=0.5, color='0.7', marker = 'o' )
+        red.plot.scatter(x='x', y='y', ax=ax, s=0.5, color='red', marker = 'o', zorder=1)
+        grey.plot.scatter(x='x', y='y', ax=ax, s=0.5, color='0.7', marker = 'o',zorder=1 )
     
     def draw_tree(self, ax):
         xmin, xmax, ymin, ymax = plt.axis()
