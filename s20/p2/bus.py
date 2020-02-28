@@ -4,6 +4,8 @@ from zipfile import ZipFile
 import copy
 import pandas as pd
 from graphviz import Digraph, Graph
+import numpy as np
+from matplotlib import pyplot as plt
 
 
 def haversine_miles(lat1, lon1, lat2, lon2):
@@ -25,7 +27,6 @@ def haversine_miles(lat1, lon1, lat2, lon2):
     d = 3956 * c
     return d
 
-
 class Location:
     """Location class to convert lat/lon pairs to
     flat earth projection centered around capitol
@@ -40,17 +41,14 @@ class Location:
             # If no latitude/longitude pair is given, use the capitol's
             if latlon is None:
                 latlon = (Location.capital_lat, Location.capital_lon)
-
             # Calculate the x and y distance from the capital
             self.x = haversine_miles(Location.capital_lat, Location.capital_lon,
                                      Location.capital_lat, latlon[1])
             self.y = haversine_miles(Location.capital_lat, Location.capital_lon,
                                      latlon[0], Location.capital_lon)
-
             # Flip the sign of the x/y coordinates based on location
             if latlon[1] < Location.capital_lon:
                 self.x *= -1
-
             if latlon[0] < Location.capital_lat:
                 self.y *= -1
 
@@ -84,57 +82,68 @@ class Node:
     def to_graphviz(self, g=None):
         if g == None:
             g = Digraph()
-            
         # draw self
         g.node(repr(self.val))
-    
         for label, child in [("L", self.left), ("R", self.right)]:
             if child != None:
                 # draw child, recursively
                 child.to_graphviz(g)
-                
                 # draw edge from self to child
                 g.edge(repr(self.val), repr(child.val), label=label)
         return g
     
     def _repr_svg_(self):
         return self.to_graphviz()._repr_svg_()
-    
-    def search(self, xlim, ylim, found_stops=[], i=1):
-        x1,x2 = xlim[0],xlim[1]
-        y1,y2 = ylim[0],ylim[1]
-        if x1 > x2:
-            x1,x2 = x2,x1
-        if y1 > y2:
-            y1,y2 = y2,y1
-        if i != 6:  
+   
+    def search(self, xlim, ylim, i=1):
+        x1,x2 = xlim
+        y1,y2 = ylim
+        if i < 6:  
             if i % 2 != 0:
                 i += 1
+                results = []
                 if self.val.x >= x1 and self.val.x <= x2:
-                    self.left.search(xlim, ylim, found_stops, i)
-                    self.right.search(xlim, ylim, found_stops, i)
+                    results += self.left.search(xlim, ylim, i)
+                    results += self.right.search(xlim, ylim, i)
                 elif self.val.x <= x1:
-                    self.right.search(xlim, ylim, found_stops, i)
+                    results += self.right.search(xlim, ylim, i)
                 else:
-                    self.left.search(xlim, ylim, found_stops, i)
+                    results += self.left.search(xlim, ylim, i)
+                return results
             else:
+                results = []
                 i += 1
                 if self.val.y >= y1 and self.val.y <= y2:
-                    self.left.search(xlim, ylim, found_stops, i)
-                    self.right.search(xlim, ylim, found_stops, i)
+                    results += self.left.search(xlim, ylim, i)
+                    results += self.right.search(xlim, ylim, i)
                 elif self.val.y <= y1:
-                    self.right.search(xlim, ylim, found_stops, i)
+                    results += self.right.search(xlim, ylim, i)
                 else:
-                    self.left.search(xlim, ylim, found_stops, i)
+                    results += self.left.search(xlim, ylim, i)
+                return results
         else:
+            found_stops = []
             for stop in self.val:
                 if stop.location.x >= x1 and stop.location.x <= x2 and stop.location.y >= y1 and stop.location.y <= y2:
                     found_stops.append(stop)
-        return found_stops
+            return found_stops
+        return results
+    
+    def non_leafs(self, ax, xlim, ylim, i=5):
+        if i>0:
+            if i % 2 != 0:
+                lw = i
+                i-=1
+                ax.plot((self.val.x,self.val.x), ylim, lw=lw, color='purple')               
+            else:
+                lw = i
+                i-=1
+                ax.plot(xlim, (self.val.y,self.val.y), lw=lw, color='purple')
+            self.left.non_leafs(ax,xlim,ylim,i)
+            self.right.non_leafs(ax,xlim,ylim,i)
 
 class BusDay:
     def __init__(self,time):        
-        self.service_ids=None
         service_list=[]
         self.weekday=time.strftime('%A').lower()         
         with ZipFile('mmt_gtfs.zip') as zf:          
@@ -147,6 +156,7 @@ class BusDay:
                 self.service_ids=sorted(service_list)
         self.trip_l = self.get_trips()
         self.stop_l = self.get_stops()
+        self.tree = Node(self.stop_l)
         return
     
     def get_trips(self, route_num: int = None):
@@ -163,7 +173,7 @@ class BusDay:
                 for row in trips.index:
                     trip_id = trips.loc[row, 'trip_id']
                     route_id = trips.loc[row, 'route_short_name']
-                    bikes_allowed = trips.loc[row, 'bikes_allowed']
+                    bikes_allowed = bool(trips.loc[row, 'bikes_allowed'])
                     trip = Trip(trip_id, route_id, bikes_allowed)
                     trip_list.add(trip)
         trip_list = list(trip_list)
@@ -177,47 +187,61 @@ class BusDay:
         trip_id_list=list(set(trip_id_list))
         with ZipFile('mmt_gtfs.zip') as zf:
             with zf.open('stop_times.txt') as g:
-                with zf.open('stops.txt') as h:
-                    self.stop_times = pd.read_csv(g)
-                    self.stops = pd.read_csv(h)
-                    stops = self.stops
-                    stops = stops.set_index('stop_id')
-                    times = self.stop_times
-                    #removes trips not in get_trips
-                    times = times.loc[times['trip_id'].isin(trip_id_list),:]
-                    #drops duplicate stops and sets the index of times to stop_id
-                    times = times.drop_duplicates(subset='stop_id').set_index('stop_id')
-                    #only uses stops in the stops file that are from set day
-                    stops=stops.loc[stops.index.isin(times.index),:]
-                    for stop_id in stops.index:
-                        latlon = (float(stops.loc[stop_id,'stop_lat']), float(stops.loc[stop_id,'stop_lon']))
-                        location = Location(latlon = latlon)
-                        wheelchair_boarding = int(stops.loc[stop_id, 'wheelchair_boarding'])
-                        stop = Stop(stop_id, location, wheelchair_boarding)
-                        stop_list.add(stop)
+                self.stop_times = pd.read_csv(g)
+            with zf.open('stops.txt') as h:
+                self.stops = pd.read_csv(h)
+                stops = self.stops
+                stops = stops.set_index('stop_id')
+                times = self.stop_times
+                #removes trips not in get_trips
+                times = times.loc[times['trip_id'].isin(trip_id_list),:]
+                #drops duplicate stops and sets the index of times to stop_id
+                times = times.drop_duplicates(subset='stop_id').set_index('stop_id')
+                #only uses stops in the stops file that are from set day
+                stops=stops.loc[stops.index.isin(times.index),:]
+                for stop_id in stops.index:
+                    latlon = (float(stops.loc[stop_id,'stop_lat']), float(stops.loc[stop_id,'stop_lon']))
+                    location = Location(latlon = latlon)
+                    wheelchair_boarding = bool(stops.loc[stop_id, 'wheelchair_boarding'])
+                    stop = Stop(stop_id, location, wheelchair_boarding)
+                    stop_list.add(stop)
         stop_list = list(stop_list)
         return sorted(stop_list, key = lambda x: x.stop_id)
     
     def get_stops_rect(self, xlim, ylim):      
-        return Node(self.stop_l).search(xlim, ylim)
+        return self.tree.search(xlim, ylim)
     
     def get_stops_circ(self, origin, radius):
         circ_list = []
-        x = origin[0]
-        y = origin[1]
+        x,y = origin
         xlim = ((x-radius),(x+radius))
         ylim = ((y-radius),(y+radius))
         rect_stops = self.get_stops_rect(xlim, ylim)
         for stop in rect_stops:
-            if stop.location.x**2 + stop.location.y**2 <= radius**2:
+            if (stop.location.x-x)**2 + (stop.location.y-y)**2 <= radius**2:
                 circ_list.append(stop)
         return circ_list
+    
+    def scatter_stops(self, ax):
+        # found df at https://stackoverflow.com/questions/34997174/how-to-convert-list-of-model-objects-to-pandas-dataframe
+        df = pd.DataFrame.from_records([s.to_dict() for s in self.stop_l])
+        df.set_index('stop_id', inplace = True)
+        red = df[df['wheelchair_boarding']==1]
+        grey = df[df['wheelchair_boarding']==0]
+        red.plot.scatter(x='x', y='y', ax=ax, s=0.5, color='red', marker = 'o')
+        grey.plot.scatter(x='x', y='y', ax=ax, s=0.5, color='0.7', marker = 'o' )
+    
+    def draw_tree(self, ax):
+        xmin, xmax, ymin, ymax = plt.axis()
+        xlim = (xmin,xmax)
+        ylim = (ymin,ymax)
+        self.tree.non_leafs(ax, xlim, ylim)  
     
 class Trip:
     def __init__(self, trip_id, route_id, bikes_allowed):
         self.trip_id = trip_id
         self.route_id = route_id
-        self.bikes_allowed = bool(bikes_allowed)        
+        self.bikes_allowed = bikes_allowed        
         return
     
     def __repr__(self):
@@ -227,7 +251,17 @@ class Stop:
     def __init__(self, stop_id, location, wheelchair_boarding):
         self.stop_id = stop_id
         self.location = location
-        self.wheelchair_boarding = bool(wheelchair_boarding)
+        self.wheelchair_boarding = wheelchair_boarding
         return
+    
     def __repr__(self):
         return "Stop({}, {}, {})".format(self.stop_id, self.location, self.wheelchair_boarding)
+    
+    def to_dict(self):
+        #found at https://stackoverflow.com/questions/34997174/how-to-convert-list-of-model-objects-to-pandas-dataframe
+        return {
+            'stop_id' : self.stop_id,
+            'x' : self.location.x,
+            'y' : self.location.y,
+            'wheelchair_boarding' : self.wheelchair_boarding
+        }
